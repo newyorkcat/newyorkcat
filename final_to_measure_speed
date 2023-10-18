@@ -1,0 +1,354 @@
+# _*_ coding: UTF-8 _*_
+
+import random
+import sys
+import numpy as np
+import cv2
+import time
+import serial
+
+omegamax = 0.9
+omegamin = 0.4
+
+pnowp = np.zeros((20, 4))  # 点现在的位置
+pnowv = np.zeros((20, 4))
+pbestp = np.zeros((20, 4))  # 点的最佳位置
+pbestv = np.zeros(20)  # 点的最佳值
+gbestp = np.zeros(4)  # 全局最佳位置
+gbestv = 0  # 全局最大值
+
+
+def text_save_double(filename, data):  # filename为写入CSV文件的路径，data为要写入数据列表.
+    file = open(filename, 'a')
+    n = len(data[0])
+    k = len(data) - 1
+    file.write('[')
+    for i in range(k):
+        file.write('[')
+        for j in range(n - 1):
+            s = str(data[i][j]) + ', '  # 去除[],这两行按数据不同，可以选择
+            file.write(s)
+        g1 = str(data[i][n - 1])
+        file.write(g1)
+        file.write('],\n')
+    file.write('[')
+    for i in range(n - 1):
+        s1 = str(data[k][i]) + ', '
+        file.write(s1)
+    g2 = str(data[k][n - 1])
+    file.write(g2)
+    file.write(']')
+    file.write(']\n')
+    file.close()
+    print("保存成功")
+    return
+
+
+def text_save_single(filename, data):  # filename为写入CSV文件的路径，data为要写入数据列表.
+    file = open(filename, 'a')
+    n = len(data)
+    k = len(data) - 1
+    file.write('[')
+    for i in range(n - 1):
+        s1 = str(data[i]) + ', '
+        file.write(s1)
+    g2 = str(data[n - 1])
+    file.write(g2)
+    file.write(']\n')
+    file.close()
+    print("保存成功")
+    return
+
+
+def text_save_float(filename, data):
+    file = open(filename, 'w')
+    s = str(data)
+    file.write(s)
+    file.close()
+    return
+
+
+def undistortt(frame):
+    k = np.array([[510.096499717978, 0, 308.211972608050],
+                  [0., 510.591919043464, 248.646053034463],
+                  [0., 0., 1.]])
+    d = np.array(
+        [0.0736518865587159, -0.208429720766683, -0.000714984183609433, -0.00972287741623954, -0.0228446860553277])
+    h, w = frame.shape[:2]
+    mapx, mapy = cv2.initUndistortRectifyMap(k, d, None, k, (w, h), 5)
+    return cv2.remap(frame, mapx, mapy, cv2.INTER_LINEAR)
+
+
+def sleeptime(hour, min, sec):
+    return hour * 3600 + min * 360 + sec
+
+
+def open_ser():
+    port = 'COM13'  # 串口号
+    baudrate = 115200  # 波特率
+    try:
+        global ser
+        ser = serial.Serial(port, baudrate, timeout=2)
+    except Exception as exc:
+        print("串口打开异常", exc)
+
+
+def send_msg(x1, x2, x3, x4):
+    try:
+        ser.write(('x' + str(x1) + ' ' + str(x2) + ' ' + str(x3) + ' ' + str(x4) + 'y' + '\r\n').encode("gbk"))
+        print('-' * 80)
+        print("已发送数据:")
+        print('x' + str(x1) + ' ' + str(x2) + ' ' + str(x3) + ' ' + str(x4) + 'y')
+        # print('-' * 80)
+        # send_datas1 = 875
+        # ser.write(str(send_datas1).encode("gbk"))
+        # print("已发送数据:", send_datas1)
+    except Exception as exc:
+        print("发送异常", exc)
+
+
+def close_ser():
+    try:
+        ser.close()
+        if ser.isOpen():
+            print("串口未关闭")
+        else:
+            print("串口已关闭")
+    except Exception as exc:
+        print("串口关闭异常", exc)
+
+
+# 定义目标方程（这里以一个简单的二次方程为例）
+def target_function(x1, x2, x3, x4):
+    send_msg(x1, x2, x3, x4)
+    second = sleeptime(0, 0, 0.1)
+    mysec = 2  # 设定每mysec秒生成一次平均速度
+    lenspd = int(mysec / second)  # 每mysec秒计算一次平均速度，注意要让(mysec/second)为整数
+    num = 1
+    a_num = 0
+    camera = cv2.VideoCapture(0)
+
+    sta = np.mat('0,0;0,0')
+    spd = [0] * lenspd
+    iturn = 1
+
+    while True:
+        time.sleep(second)
+        state, src = camera.read()
+        dst = undistortt(src)[50:400, 100:600]
+        # cv2.imshow('mat', dst)
+        cv2.waitKey(1)
+
+        img_bgr = dst
+        img_hsv = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2HSV)
+        thresh1 = np.array([0, 43, 46])
+        thresh2 = np.array([10, 255, 255])
+        img_flag0 = cv2.inRange(img_hsv, thresh1, thresh2)
+        thresh3 = np.array([156, 43, 46])
+        thresh4 = np.array([180, 255, 255])
+        img_flag1 = cv2.inRange(img_hsv, thresh3, thresh4)
+        img_flag = img_flag1  # + img_flag0
+
+        # 形态学滤波
+        img_morph = img_flag.copy()
+        cv2.erode(img_morph, (3, 3), img_morph, iterations=3)
+        cv2.dilate(img_morph, (3, 3), img_morph, iterations=3)
+
+        # 获取图像轮廓
+        cnts, _ = cv2.findContours(img_morph, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)  # 寻找图像轮廓
+        cnts_sort = sorted(cnts, key=cv2.contourArea, reverse=True)  # 将轮廓包围面积从大到小排列
+        Emptylist = []
+        if cnts_sort == Emptylist:
+            print('No red picture is captured')
+            cv2.imshow("original", img_bgr)
+        else:
+            box = cv2.minAreaRect(cnts_sort[0])  # 选取最大面积轮廓，并得出最小外接矩形
+            points = np.intp(cv2.boxPoints(box))  # 获得矩形四个定点
+
+            cen_v = (points[0, 0] + points[2, 0]) / 2
+            cen_h = (points[0, 1] + points[2, 1]) / 2
+
+            # 算速度
+            sta[1, 0] = sta[0, 0]
+            sta[1, 1] = sta[0, 1]
+            sta[0, 0] = cen_v
+            sta[0, 1] = cen_h
+            if num > 1:
+                dst = pow((pow(sta[0, 1] - sta[1, 1], 2) + pow(sta[0, 0] - sta[1, 0], 2)), 0.5)
+                dcm = 0.57  # 每个像素在现实世界中大约为0.57厘米
+                spd[a_num] = dst * dcm / second
+                if a_num == lenspd - 1:
+                    speed = sum(spd) / (lenspd - 1)
+                    a_num = 0
+                    iturn += 1
+                    rows, cols = img_bgr.shape[:2]
+                    print('%' * 40 + str(a_num))
+                    # print('color img size: (' + str(rows) + ', ' + str(cols) + ')')
+                    # print('middle: (' + str(cen_h) + ', ' + str(cen_v) + ')')
+                    print('speed: (' + str(speed) + ' cm/s)')
+                    print(iturn)
+                    if iturn >= 3:
+                        break
+
+            cv2.drawContours(img_bgr, [points], -1, (255, 0, 0), 2)
+
+            cv2.imshow("original", img_bgr)
+            if cv2.waitKey(10) & 0xff == ord(' '):
+                sys.exit(0)
+
+            num = 2
+            a_num += 1
+
+    cv2.destroyAllWindows()
+    iturn = 1
+    return input()
+
+    # return x1 ** 2 + x2 ** 2 + x3 ** 2 + x4 ** 2
+
+
+# 定义粒子类
+class Particle:
+    def __init__(self):
+        self.position = [random.randint(0, 300), random.randint(0, 1000), random.randint(0, 300),
+                         random.randint(0, 300)]
+        self.velocity = [random.randint(-50, 50) for i in range(4)]
+        self.best_position = self.position.copy()
+        self.best_value = target_function(*self.best_position)
+
+    def update_velocity(self, global_best_position, omega, phi_p, phi_g):
+        for i in range(4):
+            r_p = random.uniform(0, 1)
+            r_g = random.uniform(0, 1)
+            self.velocity[i] = round(omega * self.velocity[i] + phi_p * r_p * (
+                    self.best_position[i] - self.position[i]) + phi_g * r_g * (
+                                             global_best_position[i] - self.position[i]))
+            if self.velocity[i] > 100:
+                self.velocity[i] = 100
+            elif self.velocity[i] < -100:
+                self.velocity[i] = -100
+
+    def update_position(self):
+        for i in range(4):
+            self.position[i] += self.velocity[i]
+            # 粒子位置边界限制
+        if self.position[0] > 300:
+            self.position[0] = 300
+        if self.position[1] > 1000:
+            self.position[1] = 999
+        if self.position[2] > 300:
+            self.position[2] = 300
+        if self.position[3] > 500:
+            self.position[3] = 999
+        if self.position[0] < 0:
+            self.position[0] = 0
+        if self.position[1] < 0:
+            self.position[1] = 0
+        if self.position[2] < 0:
+            self.position[2] = 0
+        if self.position[3] < 0:
+            self.position[3] = 0
+
+
+    def evaluate(self):
+        value = target_function(*self.position)
+        print(value)
+        if value > self.best_value:
+            self.best_value = value
+            self.best_position = self.position.copy()
+
+
+# 定义粒子群类
+class ParticleSwarm:
+    def __init__(self, num_particles, max_iterations, omega, phi_p, phi_g):
+        self.particles = [Particle() for i in range(num_particles)]
+        self.global_best_position = self.particles[0].position.copy()
+        self.global_best_value = target_function(*self.global_best_position)
+        self.max_iterations = max_iterations
+        self.omega = omega
+        self.phi_p = phi_p
+        self.phi_g = phi_g
+
+    def update_global_best(self):
+        for particle in self.particles:
+            if particle.best_value > self.global_best_value:
+                self.global_best_value = particle.best_value
+                self.global_best_position = particle.best_position.copy()
+
+    def run(self):
+        omegamin = 0.4
+        k = 0
+        for i in range(self.max_iterations):
+            j = 0
+            for particle in self.particles:
+                particle.evaluate()
+                if particle.best_value > self.global_best_value:
+                    self.global_best_value = particle.best_value
+                    self.global_best_position = particle.best_position.copy()
+                particle.update_velocity(self.global_best_position,
+                                         omegamax - (omegamax - omegamin) * i / self.max_iterations, self.phi_p,
+                                         self.phi_g)
+                particle.update_position()
+                pnowp[j] = particle.position
+                pnowv[j] = particle.velocity
+                pbestp[j] = particle.best_position
+                pbestv[j] = particle.best_value
+                j = j + 1
+            k = k + 1
+            print("Iteration {}: Global best value = {}".format(i, self.global_best_value))
+            if k > 49:
+                print('%' * 40)
+                print('pnowp:')
+                print(pnowp)
+                text_save_double('pnowp' + str(i) + '.txt', pnowp)
+                print('%' * 40)
+                print('pnowv:')
+                print(pnowv)
+                text_save_double('pnowv' + str(i) + '.txt', pnowv)
+                print('%' * 40)
+                print('pbestp')
+                print(pbestp)
+                text_save_double('pbestp' + str(i) + '.txt', pbestp)
+                print('%' * 40)
+                print('pbestv')
+                print(pbestv)
+                text_save_single('pbestv' + str(i) + '.txt', pbestv)
+                print('%' * 40)
+                print(self.global_best_position)
+                text_save_single('global_best_position' + str(i) + '.txt', self.global_best_position)
+                print('%' * 40)
+                print("Iteration {}: Global best value = {}".format(i, self.global_best_value))
+                text_save_float('global_best_value' + str(i) + '.txt', self.global_best_value)
+                k = 0
+            # if cv2.waitKey(10) & 0xff == ord(' '):
+            #     print('%' * 40)
+            #     print('pnowp:')
+            #     print(pnowp)
+            #     text_save_double('pnowp' + str(i) + '.txt', pnowp)
+            #     print('%' * 40)
+            #     print('pnowv:')
+            #     print(pnowv)
+            #     text_save_double('pnowv' + str(i) + '.txt', pnowv)
+            #     print('%' * 40)
+            #     print('pbestp')
+            #     print(pbestp)
+            #     text_save_double('pbestp' + str(i) + '.txt', pbestp)
+            #     print('%' * 40)
+            #     print('pbestv')
+            #     print(pbestv)
+            #     text_save_single('pbestv' + str(i) + '.txt', pbestv)
+            #     print('%' * 40)
+            #     print(self.global_best_position)
+            #     text_save_single('global_best_position' + str(i) + '.txt', self.global_best_position)
+            #     print('%' * 40)
+            #     print("Iteration {}: Global best value = {}".format(i, self.global_best_value))
+            #     text_save_float('global_best_value' + str(i) + '.txt', self.global_best_value)
+            #     sys.exit(0)
+
+
+# 运行PSO算法
+open_ser()
+swarm = ParticleSwarm(num_particles=1, max_iterations=10, omega=0.9, phi_p=10, phi_g=10)
+swarm.run()
+close_ser()
+# 输出结果
+print("Final result: Input = {}, Output = {}".format(swarm.global_best_position, swarm.global_best_value))
