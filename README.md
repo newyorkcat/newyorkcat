@@ -1,5 +1,5 @@
 ### Hi there 👋
-这里包含本研用到的所有代码
+这里包含本研用到的摄像头矫正和测量速度的代码
 <!--
 **newyorkcat/newyorkcat** is a ✨ _special_ ✨ repository because its `README.md` (this file) appears on your GitHub profile.
 
