@@ -84,7 +84,7 @@ def sleeptime(hour, min, sec):
 
 
 def open_ser():
-    port = 'COM13'  # 串口号
+    port = 'COM1'  # 串口号
     baudrate = 115200  # 波特率
     try:
         global ser
@@ -118,10 +118,10 @@ def close_ser():
         print("串口关闭异常", exc)
 
 
-# 定义目标方程（这里以一个简单的二次方程为例）
+# 定义目标方程
 def target_function(x1, x2, x3, x4):
     send_msg(x1, x2, x3, x4)
-    second = sleeptime(0, 0, 0.1)
+    second = sleeptime(0, 0, 0.5)
     mysec = 2  # 设定每mysec秒生成一次平均速度
     lenspd = int(mysec / second)  # 每mysec秒计算一次平均速度，注意要让(mysec/second)为整数
     num = 1
@@ -130,8 +130,7 @@ def target_function(x1, x2, x3, x4):
 
     sta = np.mat('0,0;0,0')
     spd = [0] * lenspd
-    iturn = 1
-
+    iturn = 0
     while True:
         time.sleep(second)
         state, src = camera.read()
@@ -159,8 +158,14 @@ def target_function(x1, x2, x3, x4):
         cnts_sort = sorted(cnts, key=cv2.contourArea, reverse=True)  # 将轮廓包围面积从大到小排列
         Emptylist = []
         if cnts_sort == Emptylist:
-            print('No red picture is captured')
+            # print('No red picture is captured')
             cv2.imshow("original", img_bgr)
+            num = 1
+            a_num = 0
+            spd = [0] * lenspd
+            if cv2.waitKey(10) & 0xff == ord(' '):
+                sys.exit(0)
+            
         else:
             box = cv2.minAreaRect(cnts_sort[0])  # 选取最大面积轮廓，并得出最小外接矩形
             points = np.intp(cv2.boxPoints(box))  # 获得矩形四个定点
@@ -180,14 +185,14 @@ def target_function(x1, x2, x3, x4):
                 if a_num == lenspd - 1:
                     speed = sum(spd) / (lenspd - 1)
                     a_num = 0
-                    iturn += 1
                     rows, cols = img_bgr.shape[:2]
                     print('%' * 40 + str(a_num))
                     # print('color img size: (' + str(rows) + ', ' + str(cols) + ')')
                     # print('middle: (' + str(cen_h) + ', ' + str(cen_v) + ')')
                     print('speed: (' + str(speed) + ' cm/s)')
-                    print(iturn)
-                    if iturn >= 3:
+                    iturn += 1
+                    if iturn >= 5:
+                        iturn = 0
                         break
 
             cv2.drawContours(img_bgr, [points], -1, (255, 0, 0), 2)
@@ -196,12 +201,12 @@ def target_function(x1, x2, x3, x4):
             if cv2.waitKey(10) & 0xff == ord(' '):
                 sys.exit(0)
 
-            num = 2
-            a_num += 1
+        num += 1
+        a_num += 1
 
     cv2.destroyAllWindows()
-    iturn = 1
-    return input()
+    speed1 = input()
+    return speed1
 
     # return x1 ** 2 + x2 ** 2 + x3 ** 2 + x4 ** 2
 
@@ -210,8 +215,8 @@ def target_function(x1, x2, x3, x4):
 class Particle:
     def __init__(self):
         self.position = [random.randint(0, 300), random.randint(0, 1000), random.randint(0, 300),
-                         random.randint(0, 300)]
-        self.velocity = [random.randint(-50, 50) for i in range(4)]
+                         random.randint(0, 1000)]
+        self.velocity = [random.randint(-20, 20)*10 for i in range(4)]
         self.best_position = self.position.copy()
         self.best_value = target_function(*self.best_position)
 
@@ -222,36 +227,28 @@ class Particle:
             self.velocity[i] = round(omega * self.velocity[i] + phi_p * r_p * (
                     self.best_position[i] - self.position[i]) + phi_g * r_g * (
                                              global_best_position[i] - self.position[i]))
-            if self.velocity[i] > 100:
-                self.velocity[i] = 100
-            elif self.velocity[i] < -100:
-                self.velocity[i] = -100
+            if self.velocity[i] > 1000:
+                self.velocity[i] = 1000
+            elif self.velocity[i] < -1000:
+                self.velocity[i] = -1000
 
     def update_position(self):
         for i in range(4):
             self.position[i] += self.velocity[i]
-            # 粒子位置边界限制
-        if self.position[0] > 300:
-            self.position[0] = 300
-        if self.position[1] > 1000:
-            self.position[1] = 999
-        if self.position[2] > 300:
-            self.position[2] = 300
-        if self.position[3] > 500:
-            self.position[3] = 999
-        if self.position[0] < 0:
-            self.position[0] = 0
-        if self.position[1] < 0:
-            self.position[1] = 0
-        if self.position[2] < 0:
-            self.position[2] = 0
-        if self.position[3] < 0:
-            self.position[3] = 0
-
+            粒子位置边界限制
+            if self.position[1] > 300:
+                self.position[1] = 300
+            if self.position[2] > 500:
+                self.position[2] = 500
+            if self.position[3] > 300:
+                self.position[3] = 300
+            if self.position[4] > 500:
+                self.position[4] = 500
+            elif self.position[i] < 0:
+                self.position[i] = 0
 
     def evaluate(self):
         value = target_function(*self.position)
-        print(value)
         if value > self.best_value:
             self.best_value = value
             self.best_position = self.position.copy()
@@ -295,7 +292,7 @@ class ParticleSwarm:
                 j = j + 1
             k = k + 1
             print("Iteration {}: Global best value = {}".format(i, self.global_best_value))
-            if k > 49:
+            if k > 0:
                 print('%' * 40)
                 print('pnowp:')
                 print(pnowp)
