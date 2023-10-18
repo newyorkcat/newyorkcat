@@ -1,0 +1,34 @@
+import cv2 as cv
+import numpy as np
+
+def undistort(frame):
+
+	k=np.array( [[510.096499717978 ,  1.08843634026520         ,308.211972608050],
+ [  0.       ,  510.591919043464 ,248.646053034463],
+ [  0.       ,    0.       ,    1.        ]])
+
+	d=np.array([0.0736518865587159 , -0.208429720766683 ,-0.000714984183609433 ,-0.00972287741623954 ,-0.0228446860553277  ])
+	h,w=frame.shape[:2]
+	mapx,mapy=cv.initUndistortRectifyMap(k,d,None,None,(w,h),5)
+	return cv.remap(frame,mapx,mapy,cv.INTER_LINEAR)
+
+k=np.array( [[510.096499717978 ,  1.08843634026520         ,308.211972608050],
+ [  0.       ,  510.591919043464 ,248.646053034463],
+ [  0.       ,    0.       ,    1.        ]])
+
+d=np.array([0.0736518865587159 , -0.208429720766683 ,-0.000714984183609433 ,-0.00972287741623954 ,-0.0228446860553277  ])
+
+cap=cv.VideoCapture(0)
+
+while True:
+	ret,frame = cap.read()
+	h,w = frame.shape[:2]
+	cv.imshow('later',frame)
+	cv.imshow('img',undistort(frame))
+	dst = undistort(frame)[50:400, 100:600]
+	cv.imshow('img2',dst)
+	if cv.waitKey(1)&0xff==27:
+		break
+
+cap.release()
+cv.destroyAllWindows()
